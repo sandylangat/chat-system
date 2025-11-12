@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -84,9 +85,14 @@ func broadcaster() {
 
 func main() {
 	http.HandleFunc("/ws", handleConnections)
-
 	go broadcaster()
 
-	fmt.Println("WebSocket chat server running on ws://localhost:8080/ws")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	// ✅ Use Render’s assigned port
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080" // fallback for local dev
+	}
+
+	fmt.Println("WebSocket chat server running on port:", port)
+	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
