@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -10,25 +9,20 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// Upgrade HTTP connection to WebSocket
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		return true // allow all origins
 	},
 }
 
-type Client struct {
-	conn *websocket.Conn
-	name string
-}
-
+// Track connected clients
 var (
-	clients   = make(map[*websocket.Conn]Client)
+	clients   = make(map[*websocket.Conn]bool)
 	mutex     sync.Mutex
-	broadcast = make(chan string)
+	broadcast = make(chan map[string]interface{}) // open JSON object
 )
 
-// Handle incoming WebSocket connections
+// Handle WebSocket connections
 func handleConnections(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -37,44 +31,34 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	// Ask for username
-	if err := conn.WriteMessage(websocket.TextMessage, []byte("Enter your name:")); err != nil {
-		return
-	}
-
-	_, msg, err := conn.ReadMessage()
-	if err != nil {
-		return
-	}
-	name := string(msg)
-
 	mutex.Lock()
-	clients[conn] = Client{conn: conn, name: name}
+	clients[conn] = true
 	mutex.Unlock()
 
-	broadcast <- fmt.Sprintf("%s has joined the chat", name)
-
-	// Listen for messages
+	// Listen for messages from this client
 	for {
-		_, msg, err := conn.ReadMessage()
+		var msg map[string]interface{}
+		err := conn.ReadJSON(&msg)
 		if err != nil {
+			// Client disconnected
 			mutex.Lock()
-			broadcast <- fmt.Sprintf("%s has left the chat", clients[conn].name)
 			delete(clients, conn)
 			mutex.Unlock()
 			return
 		}
-		broadcast <- fmt.Sprintf("%s: %s", name, msg)
+
+		// Broadcast the message
+		broadcast <- msg
 	}
 }
 
-// Send messages to all clients
+// Broadcast messages to all clients
 func broadcaster() {
 	for {
 		msg := <-broadcast
 		mutex.Lock()
 		for conn := range clients {
-			if err := conn.WriteMessage(websocket.TextMessage, []byte(msg)); err != nil {
+			if err := conn.WriteJSON(msg); err != nil {
 				conn.Close()
 				delete(clients, conn)
 			}
@@ -87,12 +71,12 @@ func main() {
 	http.HandleFunc("/ws", handleConnections)
 	go broadcaster()
 
-	// ✅ Use Render’s assigned port
+	// Use Render-assigned port
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080" // fallback for local dev
+		port = "8080"
 	}
 
-	fmt.Println("WebSocket chat server running on port:", port)
+	log.Println("WebSocket server running on port:", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
